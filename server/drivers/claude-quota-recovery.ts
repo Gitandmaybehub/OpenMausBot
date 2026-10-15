@@ -1,5 +1,4 @@
 import { TurnQuotaRefusedError, type RuntimeEvent, type SendTurnInput } from "../contracts.ts";
-import { classifyError } from "./retry.ts";
 
 /** Hold only an initial, zero-usage quota refusal; any work makes automatic replay unsafe. */
 export function createClaudeQuotaRecovery(
@@ -17,14 +16,16 @@ export function createClaudeQuotaRecovery(
   const flush = (state: Pending) => {
     for (const event of state.errors.splice(0)) publish(event);
   };
-  const emit = (event: RuntimeEvent) => {
+  const emit = (event: RuntimeEvent, quotaRefusal = false) => {
     const state = pending.get(event.threadId);
     if (!state || state.work) { publish(event); return; }
     if (state.turnId && event.turnId !== state.turnId) { publish(event); return; }
     if (event.type === "turn.started") state.turnId = event.turnId;
     if (state.retiring) return;
     if (event.type === "turn.started" || event.type === "session.started") { publish(event); return; }
-    if (event.type === "runtime.error" && classifyError({ text: event.message }).reason === "quota") {
+    // The driver already classified the native refusal. Its human-readable explanation
+    // can change (for example, "has reached its weekly limit"), so never reparse it.
+    if (event.type === "runtime.error" && quotaRefusal) {
       state.errors.push(event);
       return;
     }

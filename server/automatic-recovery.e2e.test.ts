@@ -80,7 +80,9 @@ async function withRecoveryFixture(
     if (options.claudeQuota) {
       config.instances.opencodeGo = {
         ...config.instances.claude, displayName: "Quota-refused Claude",
-        environment: { ...config.instances.claude.environment, FAKE_CLAUDE_MODE: "usage-limit", FAKE_CLAUDE_PROMPTS: join(dataDir, "quota-prompts.jsonl") },
+        environment: { ...config.instances.claude.environment, FAKE_CLAUDE_MODE: "usage-limit", FAKE_CLAUDE_PROMPTS: join(dataDir, "quota-prompts.jsonl"),
+          FAKE_CLAUDE_RATE_LIMIT: JSON.stringify({ status: "rejected", rateLimitType: "seven_day", resetsAt: Math.floor(Date.now() / 1000) + 3600, isUsingOverage: false }),
+        },
       };
     }
     config.automaticRecovery = { enabled: options.enabled !== false, backup };

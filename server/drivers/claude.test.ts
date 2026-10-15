@@ -625,9 +625,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "quota" });
   });
 
-  it("rejects a zero-work quota refusal for recovery only after the CLI exits", async () => {
+  it.each([undefined, "five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"])("rejects a zero-work %s quota refusal for recovery only after the CLI exits", async (rateLimitType) => {
     const dump = join(scratch, "quota-recovery.json");
-    await create("usage-limit", { FAKE_CLAUDE_DUMP: dump });
+    await create("usage-limit", { FAKE_CLAUDE_DUMP: dump,
+      ...(rateLimitType ? { FAKE_CLAUDE_RATE_LIMIT: JSON.stringify({ status: "rejected", rateLimitType, resetsAt: Math.floor(Date.now() / 1000) + 3600, isUsingOverage: false }) } : {}),
+    });
     const failure = await instance.adapter.sendTurn({ threadId: "t-quota-recover", text: "hello", startupRecovery: true }).catch(error => error);
     expect(failure).toBeInstanceOf(TurnQuotaRefusedError);
     expect(() => process.kill(dumpedPid(dump), 0)).toThrow();

@@ -14,6 +14,7 @@ import { brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli 
 import { claudeAuthStatus } from "./claude-auth-status.ts";
 import { claudeModelExtras } from "./claude-model-extras.ts";
 import { classifyResumeFailure, mayReplay, rebuiltSessionNotice, recoveryPromptFor } from "../resume-recovery.ts";
+import { createClaudeQuotaRecovery } from "./claude-quota-recovery.ts";
 import { ClaudeLoginController } from "./claude-login-auth.ts";
 
 import type {
@@ -22,7 +23,6 @@ import type {
   ProviderDriver,
   ProviderInstance,
   ProviderSnapshot,
-  RuntimeEvent,
   RuntimeEventListener,
   SendTurnInput,
   SteerOutcome,
@@ -1026,9 +1026,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
     };
 
-    const emit = (event: RuntimeEvent) => {
+    const quotaRecovery = createClaudeQuotaRecovery((event) => {
       for (const l of Array.from(listeners)) l(event);
-    };
+    }, async (threadId) => {
+      const session = sessions.get(threadId);
+      if (!session) return false;
+      closeSession(threadId, "quota refused before work");
+      if (!await killCliTree(session.child)) return false;
+      await session.finishClose?.();
+      await session.closed;
+      return true;
+    });
+    const emit = quotaRecovery.emit;
     const base = (threadId: string, turnId: string) => ({
       eventId: newEventId(),
       provider: DRIVER_KIND,
@@ -2110,7 +2119,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           localComputerMcp: true,
           hooks: true,
         },
-        sendTurn,
+        sendTurn: (turn) => quotaRecovery.run(turn, () => sendTurn(turn)),
         steer,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),
         respondToRequest: async (threadId, requestId, decision) => {

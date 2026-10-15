@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR, ensureDirs, instanceConfigs, NATIVE_DIR } from "../config.ts";
-import type { ProviderInstance } from "../contracts.ts";
+import { TurnQuotaRefusedError, type ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { BACKGROUND_CALL_TIMEOUT_MS, backgroundCallArgs } from "./claude-background.ts";
 import {
@@ -623,6 +623,23 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.some((event) => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(false);
     expect(recorder.events.some((event) => event.type === "content.delta")).toBe(false);
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "quota" });
+  });
+
+  it("rejects a zero-work quota refusal for recovery only after the CLI exits", async () => {
+    const dump = join(scratch, "quota-recovery.json");
+    await create("usage-limit", { FAKE_CLAUDE_DUMP: dump });
+    const failure = await instance.adapter.sendTurn({ threadId: "t-quota-recover", text: "hello", startupRecovery: true }).catch(error => error);
+    expect(failure).toBeInstanceOf(TurnQuotaRefusedError);
+    expect(() => process.kill(dumpedPid(dump), 0)).toThrow();
+    expect(recorder.events.some(event => event.type === "runtime.error" || event.type === "turn.completed")).toBe(false);
+  });
+
+  it("does not hold a successful turn when quota recovery is enabled", async () => {
+    await create("happy");
+    const ack = await instance.adapter.sendTurn({ threadId: "t-quota-happy", text: "hello", startupRecovery: true });
+    expect(ack.turnId).toBeTruthy();
+    await recorder.until(event => event.type === "turn.completed");
+    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
   });
 
   it("names the weekly limit behind an older CLI's update request, and offers no update", async () => {
